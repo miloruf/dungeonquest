@@ -25,6 +25,10 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "scheme": "dungeonquest",
+    "plugins": [
+      "expo-router"
+    ]
   }
 }
