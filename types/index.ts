@@ -2,7 +2,7 @@ export interface Item {
   id: string;
   name: string;
   description: string;
-  effect: 'fireResistance' | 'poisonResistance' | 'attackBoost' | 'healBoost' | 'armorBoost';
+  effect: 'fireResistance' | 'poisonResistance' | 'attackBoost' | 'healBoost' | 'armorBoost' | 'rollBonus';
   power: number;
 }
 
@@ -29,12 +29,20 @@ export interface Message {
   content: string;
 }
 
+export type ChoiceType = 'combat' | 'tactical' | 'social' | 'risky' | 'recovery';
+
+export interface Choice {
+  text: string;
+  type: ChoiceType;
+  baseRequired: number;
+}
+
 export interface DungeonEvent {
   story: string;
   event: 'combat' | 'treasure' | 'trap' | 'mystery' | null;
   item: Item | null;
   damage: number | null;
-  choices: string[];
+  choices: Choice[];
 }
 
 export interface GameState {
