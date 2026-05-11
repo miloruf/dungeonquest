@@ -5,9 +5,10 @@ import { Message } from '../types';
 interface Props {
   messages: Message[];
   isLoading?: boolean;
+  streamingMessage?: string;
 }
 
-export default function StoryBox({ messages, isLoading = false }: Props) {
+export default function StoryBox({ messages, isLoading = false, streamingMessage }: Props) {
   const scrollRef = useRef<ScrollView>(null);
 
   return (
@@ -43,7 +44,13 @@ export default function StoryBox({ messages, isLoading = false }: Props) {
             </View>
           );
         })}
-        {isLoading && (
+        {streamingMessage !== undefined && streamingMessage !== '' && (
+          <View style={[styles.bubble, styles.dm]}>
+            <Text style={styles.dmLabel}>🎲 Dungeon Master</Text>
+            <Text style={styles.dmText}>{streamingMessage}<Text style={styles.cursor}>▌</Text></Text>
+          </View>
+        )}
+        {isLoading && !streamingMessage && (
           <View style={styles.bubble}>
             <Text style={styles.loading}>The Dungeon Master ponders...</Text>
           </View>
@@ -72,6 +79,7 @@ const styles = StyleSheet.create({
   dmText:       { color: '#e8e0f0', fontSize: 14, lineHeight: 21 },
   playerText:   { color: '#a29bfe', fontSize: 13 },
   loading:      { color: '#4a3a6a', fontStyle: 'italic' },
+  cursor:       { color: '#c9a227' },
   sysRow:       { flexDirection: 'row', alignItems: 'center', gap: 8, marginVertical: 2 },
   sysDash:      { flex: 1, height: 1, backgroundColor: '#2d1b4e' },
   sysText:      { color: '#4a3a6a', fontSize: 11, fontWeight: '600', textAlign: 'center' },

@@ -7,22 +7,22 @@ import {
 
 const OLLAMA_BASE = (process.env.EXPO_PUBLIC_OLLAMA_URL ?? 'http://localhost:11434').trim();
 const OLLAMA_URL  = `${OLLAMA_BASE}/v1/chat/completions`;
-const MODEL       = 'gemma3:12b';
+const MODEL       = 'gemma3n:e4b';
 
 export function isAIEnabled(): boolean {
   return (process.env.EXPO_PUBLIC_OLLAMA_URL ?? 'http://localhost:11434').trim().length > 0;
 }
 
-// ─── Shared fetch helper ──────────────────────────────────────────────────────
+// ─── Shared fetch helpers ────────────────────────────────────────────────────
 
-async function aiChat(systemPrompt: string, userMessage: string): Promise<string> {
+async function aiChat(systemPrompt: string, userMessage: string, maxTokens = 400): Promise<string> {
   const res = await fetch(OLLAMA_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: MODEL,
-      max_tokens: 600,
-      temperature: 0.8,
+      max_tokens: maxTokens,
+      temperature: 0.9,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user',   content: userMessage  },
@@ -33,6 +33,92 @@ async function aiChat(systemPrompt: string, userMessage: string): Promise<string
   if (!res.ok) throw new Error(`Ollama ${res.status}: ${await res.text()}`);
   const data = await res.json();
   return data.choices?.[0]?.message?.content ?? '';
+}
+
+// Extracts visible text progress from a named JSON string field in a partial buffer
+function extractFieldProgress(buf: string, field: string): string {
+  const keyIdx = buf.indexOf(`"${field}"`);
+  if (keyIdx === -1) return '';
+  // Skip past key, colon, optional whitespace, then opening quote
+  let i = keyIdx + field.length + 2; // past closing " of key
+  while (i < buf.length && buf[i] !== ':') i++;
+  i++; // skip ':'
+  while (i < buf.length && (buf[i] === ' ' || buf[i] === '\t' || buf[i] === '\n')) i++;
+  if (i >= buf.length || buf[i] !== '"') return '';
+  i++; // skip opening quote
+  let text = '';
+  while (i < buf.length) {
+    const ch = buf[i];
+    if (ch === '\\' && i + 1 < buf.length) {
+      const nx = buf[i + 1];
+      text += nx === 'n' ? '\n' : nx === '"' ? '"' : nx === '\\' ? '\\' : nx;
+      i += 2;
+    } else if (ch === '"') {
+      break;
+    } else {
+      text += ch;
+      i++;
+    }
+  }
+  return text;
+}
+
+// Streams a response; if jsonField is set, only calls onChunk with text from that JSON field
+async function aiChatStream(
+  systemPrompt: string,
+  userMessage: string,
+  onChunk: (text: string) => void,
+  maxTokens = 400,
+  jsonField?: string,
+): Promise<string> {
+  const res = await fetch(OLLAMA_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: MODEL,
+      max_tokens: maxTokens,
+      temperature: 0.9,
+      stream: true,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user',   content: userMessage  },
+      ],
+    }),
+  });
+
+  if (!res.ok) throw new Error(`Ollama ${res.status}: ${await res.text()}`);
+
+  const reader  = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let fullBuf   = '';
+  let lineBuf   = '';
+  let prevLen   = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    lineBuf += decoder.decode(value, { stream: true });
+    const lines = lineBuf.split('\n');
+    lineBuf = lines.pop() ?? '';
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const data = line.slice(6).trim();
+      if (data === '[DONE]') break;
+      try {
+        const token = JSON.parse(data).choices?.[0]?.delta?.content ?? '';
+        if (!token) continue;
+        fullBuf += token;
+        if (jsonField) {
+          const visible = extractFieldProgress(fullBuf, jsonField);
+          if (visible.length > prevLen) { onChunk(visible.slice(prevLen)); prevLen = visible.length; }
+        } else {
+          onChunk(token);
+        }
+      } catch { /* partial JSON line, skip */ }
+    }
+  }
+  return fullBuf;
 }
 
 function parseJSON<T>(raw: string): T | null {
@@ -58,18 +144,35 @@ export function warmUpModel(): void {
 
 // ─── Opening ─────────────────────────────────────────────────────────────────
 
-const OPENING_SYSTEM = `You are a Dungeon Master. Write a unique, atmospheric opening paragraph (2-3 sentences) for a new dungeon run. Mention the player's name and class. Set up a compelling reason to enter the dungeon. Keep it dramatic. Return ONLY the plain text, no JSON, no markdown.`;
+const DUNGEON_SETTINGS = [
+  'a crumbling mountain fortress', 'a flooded underground temple', 'a cursed forest sanctum',
+  'an ancient dwarven mine', 'a sea-cliff pirate stronghold', 'a frozen glacier tomb',
+  'a desert pyramid', 'a volcanic obsidian citadel', 'an overgrown jungle ziggurat',
+  'a plague-ravaged city undercroft',
+];
+const QUEST_HOOKS = [
+  'recover a stolen artifact', 'lift an ancient curse', 'rescue captured villagers',
+  'slay a creature terrorizing the region', 'uncover the truth behind a massacre',
+  'retrieve a grimoire of forbidden magic', 'destroy a corrupted altar',
+  'find a missing heir', 'seal a rift leaking monsters into the world',
+];
+
+const OPENING_SYSTEM = `You are a Dungeon Master. Write a unique opening (2-3 sentences) for a dungeon run. Mention the player by name and class. Be specific about the setting and quest given. Be vivid and varied — avoid clichés like "biting wind". Return ONLY plain text, no JSON, no markdown.`;
 
 export async function getDMOpening(
   player: Player,
   difficulty: GameRoom['difficulty'],
+  onChunk?: (text: string) => void,
 ): Promise<string> {
   if (!isAIEnabled()) return mockOpening(player, difficulty);
 
-  const userMsg = `Player name: ${player.name}\nClass: ${player.class}\nDifficulty: ${difficulty}\nWrite the opening.`;
+  const setting = DUNGEON_SETTINGS[Math.floor(Math.random() * DUNGEON_SETTINGS.length)];
+  const quest   = QUEST_HOOKS[Math.floor(Math.random() * QUEST_HOOKS.length)];
+  const userMsg = `Player: ${player.name} (${player.class})\nDifficulty: ${difficulty}\nSetting: ${setting}\nQuest: ${quest}\nWrite the opening now.`;
 
   try {
-    return await aiChat(OPENING_SYSTEM, userMsg);
+    if (onChunk) return await aiChatStream(OPENING_SYSTEM, userMsg, onChunk, 150);
+    return await aiChat(OPENING_SYSTEM, userMsg, 150);
   } catch (e) {
     console.warn('[DM] OpenRouter opening failed, using mock:', e);
     return mockOpening(player, difficulty);
@@ -107,6 +210,7 @@ export async function getDMSituation(
   difficulty: GameRoom['difficulty'],
   prevChoiceType: ChoiceType | null,
   recentHistory: Message[],
+  onChunk?: (text: string) => void,
 ): Promise<Situation> {
   if (!isAIEnabled()) return mockSituation(difficulty, prevChoiceType);
 
@@ -124,7 +228,9 @@ export async function getDMSituation(
   ].filter(Boolean).join('\n');
 
   try {
-    const raw  = await aiChat(SITUATION_SYSTEM, userMsg);
+    const raw  = onChunk
+      ? await aiChatStream(SITUATION_SYSTEM, userMsg, onChunk, 400, 'description')
+      : await aiChat(SITUATION_SYSTEM, userMsg);
     const data = parseJSON<SituationRaw>(raw);
     if (!data || !data.description || !Array.isArray(data.choices)) throw new Error('bad shape');
 
@@ -173,6 +279,7 @@ export async function getDMOutcome(
   effectiveRoll: number,
   requiredRoll: number,
   difficulty: GameRoom['difficulty'],
+  onChunk?: (text: string) => void,
 ): Promise<DungeonEvent> {
   if (!isAIEnabled()) return mockOutcome(choiceType, eventType, effectiveRoll, requiredRoll, difficulty);
 
@@ -191,7 +298,9 @@ export async function getDMOutcome(
   ].join('\n');
 
   try {
-    const raw  = await aiChat(OUTCOME_SYSTEM, userMsg);
+    const raw  = onChunk
+      ? await aiChatStream(OUTCOME_SYSTEM, userMsg, onChunk, 400, 'story')
+      : await aiChat(OUTCOME_SYSTEM, userMsg);
     const data = parseJSON<OutcomeRaw>(raw);
     if (!data || !data.story) throw new Error('bad shape');
 
@@ -206,8 +315,7 @@ export async function getDMOutcome(
       };
     }
 
-    // Append roll tag to story for consistency with mock DM
-    const story = `${data.story} [${rollTag}]`;
+    const story = data.story;
 
     return {
       story,

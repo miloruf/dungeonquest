@@ -59,6 +59,12 @@ export default function GameScreen() {
   const [situation, setSituation]         = useState<Situation | null>(null);
   const [diceKey, setDiceKey]             = useState(0);
   const [showStats, setShowStats]         = useState(false);
+  const [streamingText, setStreamingText] = useState('');
+
+  const makeOnChunk = () => {
+    let acc = '';
+    return (chunk: string) => { acc += chunk; setStreamingText(acc); };
+  };
 
   const isMultiplayer     = gameState.room.roomCode !== '';
   const player            = isMultiplayer
@@ -99,17 +105,24 @@ export default function GameScreen() {
       const t = setTimeout(() => router.replace('/solo'), 100);
       return () => clearTimeout(t);
     }
-    if (gameState.storyHistory.length === 0 && isMyTurn) {
+    // For multiplayer: only run if no history yet (second player joining skips this)
+    // For solo: always run and clear any stale history from a previous game
+    const shouldStart = isMultiplayer ? gameState.storyHistory.length === 0 : true;
+    if (shouldStart && isMyTurn) {
+      setGameState(prev => ({ ...prev, storyHistory: [], currentSituation: null }));
       (async () => {
-        const openingMsg: Message = { role: 'assistant', content: await getDMOpening(player, gameState.room.difficulty) };
+        const openingContent = await getDMOpening(player, gameState.room.difficulty, makeOnChunk());
+        const openingMsg: Message = { role: 'assistant', content: openingContent };
         addStoryMessage(openingMsg);
+        setStreamingText('');
         if (isMultiplayer) {
           const turnMsg: Message = { role: 'system', content: `⚔️ ${player.name}'s turn` };
           addStoryMessage(turnMsg);
         }
-        const first = await getDMSituation(gameState.room.difficulty, null, []);
+        const first = await getDMSituation(gameState.room.difficulty, null, [openingMsg], makeOnChunk());
         const firstMsg: Message = { role: 'assistant', content: first.description };
         addStoryMessage(firstMsg);
+        setStreamingText('');
         setSituation(first);
         if (isMultiplayer) {
           const history = [openingMsg, { role: 'system' as const, content: `⚔️ ${player.name}'s turn` }, firstMsg];
@@ -152,8 +165,10 @@ export default function GameScreen() {
       effectiveRoll,
       pendingChoice.requiredRoll,
       gameState.room.difficulty,
+      makeOnChunk(),
     );
     addStoryMessage({ role: 'assistant', content: event.story });
+    setStreamingText('');
 
     const newHp    = event.damage != null ? Math.max(0, player.hp - event.damage) : player.hp;
     if (event.damage != null) updatePlayerHP(player.id, newHp);
@@ -212,13 +227,14 @@ export default function GameScreen() {
       return;
     }
 
-    const next = await getDMSituation(snap.difficulty, snap.pendingChoice.type, snap.storyHistory);
+    const next = await getDMSituation(snap.difficulty, snap.pendingChoice.type, snap.storyHistory, makeOnChunk());
 
     const turnDivider: Message | null = snap.isMultiplayer
       ? { role: 'system', content: `⚔️ ${nextPlayerName}'s turn` }
       : null;
     if (turnDivider) addStoryMessage(turnDivider);
     addStoryMessage({ role: 'assistant', content: next.description });
+    setStreamingText('');
     setSituation(next);
     setPendingChoice(null);
     setPhase('choose');
@@ -322,7 +338,7 @@ export default function GameScreen() {
       )}
 
       <View style={styles.storySection}>
-        <StoryBox messages={gameState.storyHistory} isLoading={phase === 'processing'} />
+        <StoryBox messages={gameState.storyHistory} isLoading={phase === 'processing'} streamingMessage={streamingText} />
       </View>
 
       <View style={styles.controls}>
