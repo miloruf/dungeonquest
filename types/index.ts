@@ -25,7 +25,7 @@ export interface GameRoom {
 }
 
 export interface Message {
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   content: string;
 }
 
@@ -42,6 +42,13 @@ export interface DungeonEvent {
   event: 'combat' | 'treasure' | 'trap' | 'mystery' | null;
   item: Item | null;
   damage: number | null;
+  heal: number | null;
+  choices: Choice[];
+}
+
+export interface Situation {
+  event: DungeonEvent['event'];
+  description: string;
   choices: Choice[];
 }
 
@@ -49,6 +56,7 @@ export interface GameState {
   room: GameRoom;
   storyHistory: Message[];
   currentScene: string;
+  currentSituation: Situation | null;
   lastEvent: DungeonEvent | null;
   diceResult: number | null;
 }

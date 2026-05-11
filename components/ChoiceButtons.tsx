@@ -1,8 +1,10 @@
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ChoiceType } from '../types';
 
 export interface ChoiceDisplay {
   text: string;
   requiredRoll: number;
+  type: ChoiceType;
 }
 
 interface Props {
@@ -36,7 +38,7 @@ export default function ChoiceButtons({ choices, onChoice, disabled = false }: P
 
 const styles = StyleSheet.create({
   container: { gap: 8 },
-  label: { color: '#a29bfe', fontSize: 12, fontWeight: '600', marginBottom: 2 },
+  label:       { color: '#a29bfe', fontSize: 12, fontWeight: '600', marginBottom: 2 },
   button: {
     flexDirection: 'row',
     alignItems: 'center',

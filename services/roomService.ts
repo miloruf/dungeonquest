@@ -1,9 +1,14 @@
 import { RealtimeChannel } from '@supabase/supabase-js';
-import { GameState, Player } from '../types';
+import { GameState, Player, Situation } from '../types';
 import { supabase } from './supabase';
 
 function generateRoomCode(): string {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
+}
+
+function parseSituation(raw: unknown): Situation | null {
+  if (!raw || typeof raw !== 'string') return null;
+  try { return JSON.parse(raw) as Situation; } catch { return null; }
 }
 
 export async function createRoom(
@@ -65,8 +70,9 @@ export async function fetchRoom(roomCode: string): Promise<GameState | null> {
       currentTurn: data.current_turn,
       difficulty: data.difficulty,
     },
-    storyHistory: data.story_history,
-    currentScene: data.current_scene,
+    storyHistory: data.story_history ?? [],
+    currentScene: '',
+    currentSituation: parseSituation(data.current_scene),
     lastEvent: data.last_event,
     diceResult: data.dice_result,
   };
@@ -78,20 +84,21 @@ export async function updateRoomState(
     players: Player[];
     status: string;
     currentTurn: string;
-    currentScene: string;
+    currentSituation: Situation | null;
     storyHistory: GameState['storyHistory'];
     lastEvent: GameState['lastEvent'];
     diceResult: number | null;
   }>
 ): Promise<void> {
   const dbPatch: Record<string, unknown> = {};
-  if (patch.players !== undefined) dbPatch.players = patch.players;
-  if (patch.status !== undefined) dbPatch.status = patch.status;
-  if (patch.currentTurn !== undefined) dbPatch.current_turn = patch.currentTurn;
-  if (patch.currentScene !== undefined) dbPatch.current_scene = patch.currentScene;
-  if (patch.storyHistory !== undefined) dbPatch.story_history = patch.storyHistory;
-  if (patch.lastEvent !== undefined) dbPatch.last_event = patch.lastEvent;
-  if (patch.diceResult !== undefined) dbPatch.dice_result = patch.diceResult;
+  if (patch.players !== undefined)         dbPatch.players       = patch.players;
+  if (patch.status !== undefined)          dbPatch.status        = patch.status;
+  if (patch.currentTurn !== undefined)     dbPatch.current_turn  = patch.currentTurn;
+  if (patch.currentSituation !== undefined)
+    dbPatch.current_scene = patch.currentSituation ? JSON.stringify(patch.currentSituation) : null;
+  if (patch.storyHistory !== undefined)    dbPatch.story_history = patch.storyHistory;
+  if (patch.lastEvent !== undefined)       dbPatch.last_event    = patch.lastEvent;
+  if (patch.diceResult !== undefined)      dbPatch.dice_result   = patch.diceResult;
 
   const { error } = await supabase
     .from('rooms')
@@ -120,8 +127,9 @@ export function subscribeToRoom(
             currentTurn: d.current_turn as string,
             difficulty: d.difficulty as GameState['room']['difficulty'],
           },
-          storyHistory: d.story_history as GameState['storyHistory'],
-          currentScene: d.current_scene as string,
+          storyHistory: (d.story_history as GameState['storyHistory']) ?? [],
+          currentScene: '',
+          currentSituation: parseSituation(d.current_scene),
           lastEvent: d.last_event as GameState['lastEvent'],
           diceResult: d.dice_result as number | null,
         });

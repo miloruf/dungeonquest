@@ -1,15 +1,21 @@
+import { useEffect } from 'react';
 import { useRouter } from 'expo-router';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { warmUpModel } from '../services/dungeonMaster';
 
 export default function HomeScreen() {
   const router = useRouter();
+  useEffect(() => { warmUpModel(); }, []);
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>DungeonQuest</Text>
         <Text style={styles.subtitle}>Ein KI-Dungeon erwartet dich</Text>
+        <TouchableOpacity style={styles.howToBtn} onPress={() => router.push('/onboarding')}>
+          <Text style={styles.howToBtnText}>? Wie spielt man</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.buttonContainer}>
@@ -55,6 +61,19 @@ const styles = StyleSheet.create({
     color: '#a29bfe',
     marginTop: 8,
     textAlign: 'center',
+  },
+  howToBtn: {
+    marginTop: 20,
+    borderWidth: 1,
+    borderColor: '#3d1f6b',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  howToBtnText: {
+    color: '#6c5a8e',
+    fontSize: 13,
+    fontWeight: '600',
   },
   buttonContainer: {
     paddingHorizontal: 24,

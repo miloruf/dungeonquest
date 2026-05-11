@@ -35,7 +35,7 @@ export default function SoloScreen() {
     };
     setGameState({
       room: {
-        roomCode: 'SOLO',
+        roomCode: '',
         players: [player],
         status: 'playing',
         currentTurn: player.id,
@@ -43,6 +43,7 @@ export default function SoloScreen() {
       },
       storyHistory: [],
       currentScene: 'dungeon-entrance',
+      currentSituation: null,
       lastEvent: null,
       diceResult: null,
     });

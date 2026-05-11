@@ -13,23 +13,27 @@ const DEFAULT_STATE: GameState = {
   room: DEFAULT_ROOM,
   storyHistory: [],
   currentScene: 'start',
+  currentSituation: null,
   lastEvent: null,
   diceResult: null,
 };
 
 interface GameContextValue {
   gameState: GameState;
+  localPlayerId: string | null;
   addItem: (playerId: string, item: Item) => void;
   updatePlayerHP: (playerId: string, hp: number) => void;
   setDiceResult: (result: number) => void;
   addStoryMessage: (message: Message) => void;
   setGameState: React.Dispatch<React.SetStateAction<GameState>>;
+  setLocalPlayerId: (id: string) => void;
 }
 
 const GameContext = createContext<GameContextValue | null>(null);
 
 export function GameProvider({ children }: { children: React.ReactNode }) {
   const [gameState, setGameState] = useState<GameState>(DEFAULT_STATE);
+  const [localPlayerId, setLocalPlayerId] = useState<string | null>(null);
 
   function addItem(playerId: string, item: Item) {
     setGameState(prev => ({
@@ -67,7 +71,11 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <GameContext.Provider value={{ gameState, addItem, updatePlayerHP, setDiceResult, addStoryMessage, setGameState }}>
+    <GameContext.Provider value={{
+      gameState, localPlayerId,
+      addItem, updatePlayerHP, setDiceResult, addStoryMessage,
+      setGameState, setLocalPlayerId,
+    }}>
       {children}
     </GameContext.Provider>
   );
@@ -75,8 +83,6 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
 
 export function useGame(): GameContextValue {
   const context = useContext(GameContext);
-  if (!context) {
-    throw new Error('useGame must be used within a GameProvider');
-  }
+  if (!context) throw new Error('useGame must be used within a GameProvider');
   return context;
 }
