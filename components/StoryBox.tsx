@@ -33,6 +33,14 @@ export default function StoryBox({ messages, isLoading = false, streamingMessage
               </View>
             );
           }
+          if (msg.role === 'chaos') {
+            return (
+              <View key={i} style={[styles.bubble, styles.chaos]}>
+                <Text style={styles.chaosLabel}>🎲 Chaos!</Text>
+                <Text style={styles.chaosText}>{msg.content}</Text>
+              </View>
+            );
+          }
           return (
             <View key={i} style={[styles.bubble, msg.role === 'assistant' ? styles.dm : styles.player]}>
               {msg.role === 'assistant' && (
@@ -80,6 +88,9 @@ const styles = StyleSheet.create({
   playerText:   { color: '#a29bfe', fontSize: 13 },
   loading:      { color: '#4a3a6a', fontStyle: 'italic' },
   cursor:       { color: '#c9a227' },
+  chaos:        { backgroundColor: '#1a0a00', borderLeftWidth: 3, borderLeftColor: '#e67e22' },
+  chaosLabel:   { color: '#e67e22', fontSize: 11, fontWeight: '700', marginBottom: 4 },
+  chaosText:    { color: '#f0c080', fontSize: 14, lineHeight: 21, fontStyle: 'italic' },
   sysRow:       { flexDirection: 'row', alignItems: 'center', gap: 8, marginVertical: 2 },
   sysDash:      { flex: 1, height: 1, backgroundColor: '#2d1b4e' },
   sysText:      { color: '#4a3a6a', fontSize: 11, fontWeight: '600', textAlign: 'center' },

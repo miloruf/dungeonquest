@@ -22,6 +22,7 @@ interface GameContextValue {
   gameState: GameState;
   localPlayerId: string | null;
   addItem: (playerId: string, item: Item) => void;
+  removeItem: (playerId: string, itemId: string) => void;
   updatePlayerHP: (playerId: string, hp: number) => void;
   setDiceResult: (result: number) => void;
   addStoryMessage: (message: Message) => void;
@@ -42,6 +43,18 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         ...prev.room,
         players: prev.room.players.map(p =>
           p.id === playerId ? { ...p, inventory: [...p.inventory, item] } : p
+        ),
+      },
+    }));
+  }
+
+  function removeItem(playerId: string, itemId: string) {
+    setGameState(prev => ({
+      ...prev,
+      room: {
+        ...prev.room,
+        players: prev.room.players.map(p =>
+          p.id === playerId ? { ...p, inventory: p.inventory.filter(i => i.id !== itemId) } : p
         ),
       },
     }));
@@ -73,7 +86,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   return (
     <GameContext.Provider value={{
       gameState, localPlayerId,
-      addItem, updatePlayerHP, setDiceResult, addStoryMessage,
+      addItem, removeItem, updatePlayerHP, setDiceResult, addStoryMessage,
       setGameState, setLocalPlayerId,
     }}>
       {children}

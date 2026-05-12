@@ -4,7 +4,13 @@ import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput
 import { SafeAreaView } from 'react-native-safe-area-context';
 import ClassSelector, { CLASS_HP } from '../components/ClassSelector';
 import { useGame } from '../context/gameContext';
-import { GameRoom, Player } from '../types';
+import { GameRoom, Player, Skill } from '../types';
+
+const STARTING_SKILLS: Record<Player['class'], Omit<Skill, 'id'>> = {
+  warrior: { name: 'Cleave',      description: 'A powerful horizontal slash that hits everything in arc', type: 'combat',   baseRequired: 10, level: 1, useCount: 0 },
+  mage:    { name: 'Fireball',    description: 'Hurl a ball of arcane fire that explodes on impact',      type: 'risky',    baseRequired: 11, level: 1, useCount: 0 },
+  healer:  { name: 'Holy Light',  description: 'Channel divine energy to heal and blind undead',          type: 'recovery', baseRequired: 7,  level: 1, useCount: 0 },
+};
 
 const DIFFICULTIES: { value: GameRoom['difficulty']; label: string; color: string; desc: string }[] = [
   { value: 'easy',   label: 'Easy',   color: '#2ecc71', desc: 'Need 7+  ·  8 turns' },
@@ -24,6 +30,7 @@ export default function SoloScreen() {
   const handleStart = () => {
     if (!canStart || !selectedClass) return;
     const maxHp = CLASS_HP[selectedClass];
+    const startSkill = STARTING_SKILLS[selectedClass];
     const player: Player = {
       id: 'player-1',
       name: name.trim(),
@@ -32,6 +39,7 @@ export default function SoloScreen() {
       maxHp,
       inventory: [],
       activeEffects: [],
+      skills: [{ ...startSkill, id: 'skill-1' }],
     };
     setGameState({
       room: {

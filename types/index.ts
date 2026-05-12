@@ -14,6 +14,7 @@ export interface Player {
   maxHp: number;
   inventory: Item[];
   activeEffects: string[];
+  skills: Skill[];
 }
 
 export interface GameRoom {
@@ -25,11 +26,21 @@ export interface GameRoom {
 }
 
 export interface Message {
-  role: 'user' | 'assistant' | 'system';
+  role: 'user' | 'assistant' | 'system' | 'chaos';
   content: string;
 }
 
 export type ChoiceType = 'combat' | 'tactical' | 'social' | 'risky' | 'recovery';
+
+export interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  type: ChoiceType;
+  baseRequired: number;
+  level: number;
+  useCount: number;
+}
 
 export interface Choice {
   text: string;
@@ -44,6 +55,8 @@ export interface DungeonEvent {
   damage: number | null;
   heal: number | null;
   choices: Choice[];
+  chaosStory?: string | null;
+  questComplete?: boolean;
 }
 
 export interface Situation {

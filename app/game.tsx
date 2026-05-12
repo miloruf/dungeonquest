@@ -7,8 +7,7 @@ import DiceRoller from '../components/DiceRoller';
 import HPBar from '../components/HPBar';
 import StoryBox from '../components/StoryBox';
 import { useGame } from '../context/gameContext';
-import { getMaxTurns } from '../services/mockDungeonMaster';
-import { getDMOpening, getDMOutcome, getDMSituation, isAIEnabled } from '../services/dungeonMaster';
+import { getDMOutcome, getDMSituation, isAIEnabled } from '../services/dungeonMaster';
 import { subscribeToRoom, updateRoomState } from '../services/roomService';
 import { Choice, ChoiceType, DungeonEvent, Message, Player, Situation } from '../types';
 
@@ -52,7 +51,7 @@ function recapMessage(player: Player, finalHp: number, event: DungeonEvent): Mes
 
 export default function GameScreen() {
   const router = useRouter();
-  const { gameState, localPlayerId, addItem, updatePlayerHP, addStoryMessage, setGameState } = useGame();
+  const { gameState, localPlayerId, addItem, removeItem, updatePlayerHP, addStoryMessage, setGameState } = useGame();
   const [phase, setPhase]                 = useState<Phase>('choose');
   const [turnCount, setTurnCount]         = useState(0);
   const [pendingChoice, setPendingChoice] = useState<ChoiceDisplay | null>(null);
@@ -73,7 +72,6 @@ export default function GameScreen() {
   const isMyTurn          = !isMultiplayer || gameState.room.currentTurn === (player?.id ?? '');
   const currentTurnPlayer = gameState.room.players.find(p => p.id === gameState.room.currentTurn);
 
-  const maxTurns  = player ? getMaxTurns(gameState.room.difficulty) : 5;
   const rollBonus = player
     ? player.inventory.filter(i => i.effect === 'rollBonus').reduce((s, i) => s + i.power, 0)
     : 0;
@@ -111,23 +109,26 @@ export default function GameScreen() {
     if (shouldStart && isMyTurn) {
       setGameState(prev => ({ ...prev, storyHistory: [], currentSituation: null }));
       (async () => {
-        const openingContent = await getDMOpening(player, gameState.room.difficulty, makeOnChunk());
-        const openingMsg: Message = { role: 'assistant', content: openingContent };
+        let acc = '';
+        const first = await getDMSituation(
+          gameState.room.difficulty,
+          null,
+          [],
+          player.class,
+          (chunk: string) => { acc += chunk; setStreamingText(acc); },
+          player,
+        );
+
+        const openingMsg: Message = { role: 'assistant', content: first.description };
         addStoryMessage(openingMsg);
         setStreamingText('');
+        setSituation(first);
+
         if (isMultiplayer) {
           const turnMsg: Message = { role: 'system', content: `⚔️ ${player.name}'s turn` };
           addStoryMessage(turnMsg);
-        }
-        const first = await getDMSituation(gameState.room.difficulty, null, [openingMsg], makeOnChunk());
-        const firstMsg: Message = { role: 'assistant', content: first.description };
-        addStoryMessage(firstMsg);
-        setStreamingText('');
-        setSituation(first);
-        if (isMultiplayer) {
-          const history = [openingMsg, { role: 'system' as const, content: `⚔️ ${player.name}'s turn` }, firstMsg];
           updateRoomState(gameState.room.roomCode, {
-            storyHistory: history,
+            storyHistory: [openingMsg, turnMsg],
             currentSituation: first,
           }).catch(console.error);
         }
@@ -145,6 +146,27 @@ export default function GameScreen() {
     router.replace('/');
   }
 
+  const CONSUMABLE_EFFECTS = new Set(['healBoost', 'poisonResistance', 'fireResistance']);
+
+  function handleUseItem(item: { id: string; name: string; effect: string; power: number }) {
+    if (!player) return;
+    let healAmt = 0;
+    let msg = '';
+    if (item.effect === 'healBoost') {
+      healAmt = Math.min(player.maxHp - player.hp, item.power * 10);
+      updatePlayerHP(player.id, player.hp + healAmt);
+      msg = `${player.name} trinkt ${item.name} und erholt ${healAmt} HP.`;
+    } else if (item.effect === 'poisonResistance') {
+      healAmt = Math.min(player.maxHp - player.hp, 5);
+      if (healAmt > 0) updatePlayerHP(player.id, player.hp + healAmt);
+      msg = `${player.name} verwendet ${item.name}. Das Gift wird neutralisiert.`;
+    } else if (item.effect === 'fireResistance') {
+      msg = `${player.name} aktiviert ${item.name}. Feuerschutz ist jetzt aktiv.`;
+    }
+    removeItem(player.id, item.id);
+    addStoryMessage({ role: 'system', content: msg });
+  }
+
   const handleChoice = (choice: ChoiceDisplay) => {
     setPendingChoice(choice);
     setDiceKey(k => k + 1);
@@ -156,7 +178,12 @@ export default function GameScreen() {
     setPhase('processing');
 
     const effectiveRoll = Math.min(20, rawRoll + rollBonus);
+    const isChaos = rawRoll === 1 ? Math.random() < 0.5 : Math.random() < 0.08;
     addStoryMessage({ role: 'user', content: pendingChoice.text });
+
+    const usedSkill = pendingChoice.isClassSkill
+      ? player.skills.find(s => s.name === pendingChoice.text) ?? null
+      : null;
 
     const event = await getDMOutcome(
       pendingChoice.type,
@@ -165,16 +192,45 @@ export default function GameScreen() {
       effectiveRoll,
       pendingChoice.requiredRoll,
       gameState.room.difficulty,
+      isChaos,
+      player.inventory,
+      usedSkill ? { name: usedSkill.name, level: usedSkill.level, description: usedSkill.description } : null,
       makeOnChunk(),
     );
     addStoryMessage({ role: 'assistant', content: event.story });
     setStreamingText('');
+    if (event.chaosStory) {
+      addStoryMessage({ role: 'chaos', content: event.chaosStory });
+    }
 
     const newHp    = event.damage != null ? Math.max(0, player.hp - event.damage) : player.hp;
     if (event.damage != null) updatePlayerHP(player.id, newHp);
     const healedHp = event.heal != null ? Math.min(player.maxHp, newHp + event.heal) : newHp;
     if (event.heal != null) updatePlayerHP(player.id, healedHp);
     if (event.item) addItem(player.id, event.item);
+
+    if (usedSkill) {
+      const newUseCount = usedSkill.useCount + 1;
+      const levelsUp    = newUseCount >= 3 && usedSkill.level < 3;
+      const newLevel    = levelsUp ? usedSkill.level + 1 : usedSkill.level;
+      if (levelsUp) {
+        addStoryMessage({ role: 'system', content: `✨ ${usedSkill.name} reached Level ${newLevel}!` });
+      }
+      setGameState(prev => ({
+        ...prev,
+        room: {
+          ...prev.room,
+          players: prev.room.players.map(p =>
+            p.id === player.id
+              ? { ...p, skills: p.skills.map(s => s.id === usedSkill.id
+                  ? { ...s, useCount: levelsUp ? 0 : newUseCount, level: newLevel }
+                  : s) }
+              : p
+          ),
+        },
+      }));
+    }
+
     setGameState(prev => ({ ...prev, lastEvent: event }));
 
     const newTurn = turnCount + 1;
@@ -222,12 +278,12 @@ export default function GameScreen() {
       router.push(`/result?won=false&turns=${newTurn}`);
       return;
     }
-    if (newTurn >= maxTurns) {
+    if (event.questComplete) {
       router.push(`/result?won=true&turns=${newTurn}`);
       return;
     }
 
-    const next = await getDMSituation(snap.difficulty, snap.pendingChoice.type, snap.storyHistory, makeOnChunk());
+    const next = await getDMSituation(snap.difficulty, snap.pendingChoice.type, snap.storyHistory, snap.player.class, makeOnChunk());
 
     const turnDivider: Message | null = snap.isMultiplayer
       ? { role: 'system', content: `⚔️ ${nextPlayerName}'s turn` }
@@ -261,6 +317,15 @@ export default function GameScreen() {
     ? (situation?.choices ?? []).map(c => toDisplayChoice(c, player))
     : [];
 
+  const skillChoices: ChoiceDisplay[] = isMyTurn
+    ? player.skills.map(s => ({
+        text:         s.name,
+        type:         s.type,
+        requiredRoll: Math.max(1, s.baseRequired - (s.level - 1) * 2),
+        isClassSkill: true,
+      }))
+    : [];
+
   const EFFECT_ICONS: Record<string, string> = {
     rollBonus: '🎲', attackBoost: '⚔️', armorBoost: '🛡️',
     healBoost: '💚', fireResistance: '🔥', poisonResistance: '☠️',
@@ -274,7 +339,7 @@ export default function GameScreen() {
         </TouchableOpacity>
         <View style={styles.headerRight}>
           {isAIEnabled() && <Text style={styles.aiBadge}>🤖 AI</Text>}
-          <Text style={styles.turnBadge}>Turn {turnCount + 1}/{maxTurns}</Text>
+          <Text style={styles.turnBadge}>Turn {turnCount + 1}</Text>
         </View>
       </View>
 
@@ -312,6 +377,15 @@ export default function GameScreen() {
                     <View>
                       <Text style={styles.itemName}>{item.name}</Text>
                       <Text style={styles.itemDesc}>{item.description}</Text>
+                      {CONSUMABLE_EFFECTS.has(item.effect) && (
+                        <TouchableOpacity
+                          style={styles.useBtn}
+                          onPress={() => handleUseItem(item)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.useBtnText}>Verwenden</Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
                   </View>
                 ))}
@@ -343,7 +417,12 @@ export default function GameScreen() {
 
       <View style={styles.controls}>
         {phase === 'choose' && isMyTurn && (
-          <ChoiceButtons choices={displayChoices} onChoice={handleChoice} />
+          <>
+            <ChoiceButtons choices={displayChoices} onChoice={handleChoice} />
+            {skillChoices.length > 0 && (
+              <ChoiceButtons choices={skillChoices} onChoice={handleChoice} label="Class Skills:" />
+            )}
+          </>
         )}
 
         {phase === 'choose' && !isMyTurn && (
@@ -405,6 +484,8 @@ const styles = StyleSheet.create({
   itemIcon:       { fontSize: 18 },
   itemName:       { color: '#f4d03f', fontSize: 12, fontWeight: '700' },
   itemDesc:       { color: '#6c5a8e', fontSize: 10 },
+  useBtn:         { marginTop: 4, backgroundColor: '#2d1b4e', borderRadius: 5, paddingHorizontal: 8, paddingVertical: 3, alignSelf: 'flex-start' },
+  useBtnText:     { color: '#c9a227', fontSize: 10, fontWeight: '700' },
   turnBar:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#1a0f2e', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 },
   turnBarYou:     { color: '#c9a227', fontSize: 12, fontWeight: '700' },
   turnBarOther:   { color: '#6c5a8e', fontSize: 12, fontStyle: 'italic' },

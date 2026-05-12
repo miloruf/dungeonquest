@@ -209,8 +209,16 @@ const EVENT_DIST: Record<GameRoom['difficulty'], [number, number, number, number
 
 // ─── Dynamic item generation ─────────────────────────────────────────────────
 
-const ITEM_PREFIXES_COMMON = ['Ancient', 'Worn', 'Dusty', 'Rusted', 'Cracked', 'Faded', 'Simple'];
-const ITEM_PREFIXES_RARE   = ['Legendary', 'Divine', 'Void-Touched', 'Ethereal', "God's", 'Mythic', 'Arcane'];
+const ITEM_PREFIXES_COMMON = [
+  'Ancient', 'Worn', 'Dusty', 'Rusted', 'Cracked', 'Faded', 'Simple',
+  'Tarnished', 'Weathered', 'Chipped', 'Battered', 'Crude', 'Forgotten',
+  'Salvaged', 'Makeshift', 'Brittle', 'Dull', 'Stained', 'Mossy', 'Burnt',
+];
+const ITEM_PREFIXES_RARE = [
+  'Legendary', 'Divine', 'Void-Touched', 'Ethereal', "God's", 'Mythic', 'Arcane',
+  'Cursed', 'Blessed', 'Wraith-Forged', 'Dragon-Touched', 'Soul-Bound', 'Celestial',
+  'Infernal', 'Runic', 'Spectral', 'Blood-Tempered', 'Astral', 'Eldritch', 'Sanctified',
+];
 
 const ITEM_BASES: Record<Item['effect'], string[]> = {
   rollBonus:        ["Gambler's Die", 'Fate Coin', 'Lucky Charm', 'Fortune Rune', 'Destiny Token'],
@@ -318,10 +326,10 @@ export function getOpeningStory(player: Player, difficulty: GameRoom['difficulty
 export function generateSituation(
   difficulty: GameRoom['difficulty'],
   prevChoiceType: ChoiceType | null,
+  _playerClass: Player['class'] = 'warrior',
 ): Situation {
-  const dist    = prevChoiceType ? ACTION_SITUATION_BIAS[prevChoiceType] : EVENT_DIST[difficulty];
-  const diffMod = { easy: -2, medium: 0, hard: 3 }[difficulty];
-  const r       = Math.random();
+  const dist = prevChoiceType ? ACTION_SITUATION_BIAS[prevChoiceType] : EVENT_DIST[difficulty];
+  const r    = Math.random();
 
   let event: DungeonEvent['event'];
   if      (r < dist[0]) event = 'combat';
@@ -330,13 +338,8 @@ export function generateSituation(
   else if (r < dist[3]) event = 'mystery';
   else                  event = null;
 
-  const descKey    = event ?? 'null';
-  const description = pick(SITUATION_STORIES[descKey]);
-  const rawChoices  = BASE_CHOICES[event ?? 'default'] ?? BASE_CHOICES.default;
-  const choices: Choice[] = rawChoices.map(c => ({
-    ...c,
-    baseRequired: Math.max(1, c.baseRequired + diffMod),
-  }));
+  const description = pick(SITUATION_STORIES[event ?? 'null']);
+  const choices: Choice[] = (BASE_CHOICES[event ?? 'default'] ?? BASE_CHOICES.default).map(c => ({ ...c }));
 
   return { event, description, choices };
 }
