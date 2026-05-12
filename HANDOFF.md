@@ -107,6 +107,51 @@ types/index.ts       All shared types — Item, Player, Skill, GameRoom,
 
 ---
 
+## Claude Code Skills & Plugins
+
+### Global skills (auto-applied, no slash command needed)
+Stored in `C:\Users\milor\.claude\skills\` — Claude loads these automatically per CLAUDE.md rules:
+
+| Skill file | When to use |
+|---|---|
+| `superpowers.skill` | ALL coding tasks — structured planning, TDD, self-review before delivering |
+| `self-healing.skill` | Any command that might fail — diagnose → fix → retry automatically |
+| `cost-reducer.skill` | Before large agentic tasks — flag expensive ops, estimate token cost |
+| `web-app-tester.skill` | Testing in browser/emulator — check JS errors, layout, API calls |
+| `security-audit.skill` | Touching auth, API keys, DB, RLS, or before any commit with credentials |
+
+### User-invocable skills (type `/skill-name`)
+
+| Slash command | What it does |
+|---|---|
+| `/ai-sdk` | Answer questions about Vercel AI SDK (generateText, streamText, useChat, tool calling, etc.) |
+| `/claude-api` | Build/debug Anthropic SDK apps, prompt caching, model migrations |
+| `/review` | Review a pull request |
+| `/security-review` | Full security review of pending branch changes |
+| `/simplify` | Review changed code for reuse, quality and efficiency — then fix issues |
+| `/init` | Initialize a new CLAUDE.md with codebase documentation |
+| `/update-config` | Configure Claude Code via settings.json (hooks, permissions, env vars) |
+| `/keybindings-help` | Customize keyboard shortcuts in `~/.claude/keybindings.json` |
+| `/fewer-permission-prompts` | Scan transcripts and add an allowlist to reduce permission prompts |
+| `/loop` | Run a prompt on a recurring interval |
+| `/schedule` | Create scheduled remote agents (cron) |
+
+### Installed plugins (from `claude-plugins-official` marketplace)
+Notable ones available to install/use:
+
+| Plugin | Purpose |
+|---|---|
+| `skill-creator` | Create new `.skill` files |
+| `feature-dev` | End-to-end feature development workflow |
+| `code-review` | Structured code review |
+| `frontend-design` | UI/UX focused design help |
+| `hookify` | Set up Claude Code hooks |
+| `session-report` | Generate session summary reports |
+| `context7` | Fetch up-to-date library documentation |
+| `github` / `linear` / `playwright` | External service integrations |
+
+---
+
 ## Game Loop (game.tsx)
 
 ```
