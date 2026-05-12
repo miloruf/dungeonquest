@@ -31,11 +31,6 @@ export default function ClassSelector({ selected, onSelect }: Props) {
   );
 }
 
-export const CLASS_HP: Record<Player['class'], number> = {
-  warrior: 120,
-  mage: 80,
-  healer: 100,
-};
 
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', gap: 10 },

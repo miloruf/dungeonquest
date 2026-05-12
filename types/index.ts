@@ -1,9 +1,19 @@
+export type StatusEffectType = 'poison' | 'burning' | 'paralysis' | 'blessed' | 'strengthened';
+
+export interface ActiveEffect {
+  id: string;
+  type: StatusEffectType;
+  duration: number;   // turns remaining
+  magnitude: number;  // damage/turn for negative; roll reduction for positive
+}
+
 export interface Item {
   id: string;
   name: string;
   description: string;
-  effect: 'fireResistance' | 'poisonResistance' | 'attackBoost' | 'healBoost' | 'armorBoost' | 'rollBonus';
+  effect: 'fireResistance' | 'poisonResistance' | 'attackBoost' | 'healBoost' | 'armorBoost' | 'rollBonus' | 'learnSkill' | 'manaRestore';
   power: number;
+  skillData?: { name: string; description: string; type: ChoiceType; baseRequired: number };
 }
 
 export interface Player {
@@ -12,9 +22,17 @@ export interface Player {
   class: 'warrior' | 'mage' | 'healer';
   hp: number;
   maxHp: number;
+  mana: number;
+  maxMana: number;
+  gold: number;
   inventory: Item[];
-  activeEffects: string[];
+  activeEffects: ActiveEffect[];
   skills: Skill[];
+}
+
+export interface MerchantItem {
+  item: Item;
+  price: number;
 }
 
 export interface GameRoom {
@@ -38,6 +56,7 @@ export interface Skill {
   description: string;
   type: ChoiceType;
   baseRequired: number;
+  manaCost: number;
   level: number;
   useCount: number;
 }
@@ -50,19 +69,23 @@ export interface Choice {
 
 export interface DungeonEvent {
   story: string;
-  event: 'combat' | 'treasure' | 'trap' | 'mystery' | null;
+  event: 'combat' | 'treasure' | 'trap' | 'mystery' | 'merchant' | null;
   item: Item | null;
   damage: number | null;
   heal: number | null;
+  goldGained?: number | null;
   choices: Choice[];
   chaosStory?: string | null;
   questComplete?: boolean;
+  applyEffect?: ActiveEffect | null;
 }
 
 export interface Situation {
   event: DungeonEvent['event'];
   description: string;
   choices: Choice[];
+  environmentalDamage?: { type: 'poison' | 'burning' | 'cold'; magnitude: number } | null;
+  merchantInventory?: MerchantItem[] | null;
 }
 
 export interface GameState {

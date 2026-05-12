@@ -1,3 +1,6 @@
+import { generateText, streamText } from 'ai';
+import { createOpenAI } from '@ai-sdk/openai';
+import { Platform } from 'react-native';
 import { Choice, ChoiceType, DungeonEvent, GameRoom, Item, Message, Player, Situation } from '../types';
 import {
   generateOutcome as mockOutcome,
@@ -5,47 +8,49 @@ import {
   getOpeningStory as mockOpening,
 } from './mockDungeonMaster';
 
-const OLLAMA_BASE = (process.env.EXPO_PUBLIC_OLLAMA_URL ?? 'http://localhost:11434').trim();
-const OLLAMA_URL  = `${OLLAMA_BASE}/v1/chat/completions`;
-const MODEL       = 'gemma3n:e4b';
+const GATEWAY_URL = 'https://ai-gateway.vercel.sh/v1';
+const MODEL       = 'google/gemini-3-flash';
+
+// expo/fetch enables streaming in React Native; browsers have native streaming support
+const nativeFetch: typeof fetch | undefined = Platform.OS !== 'web'
+  ? (require('expo/fetch') as { fetch: typeof fetch }).fetch
+  : undefined;
+
+const gatewayProvider = createOpenAI({
+  baseURL: GATEWAY_URL,
+  apiKey:  process.env.EXPO_PUBLIC_AI_GATEWAY_API_KEY ?? '',
+  ...(nativeFetch ? { fetch: nativeFetch } : {}),
+});
+
+const geminiModel = gatewayProvider(MODEL);
 
 export function isAIEnabled(): boolean {
-  return (process.env.EXPO_PUBLIC_OLLAMA_URL ?? 'http://localhost:11434').trim().length > 0;
+  return (process.env.EXPO_PUBLIC_AI_GATEWAY_API_KEY ?? '').length > 0;
 }
 
-// ─── Shared fetch helpers ────────────────────────────────────────────────────
+// ─── Shared helpers ───────────────────────────────────────────────────────────
 
-async function aiChat(systemPrompt: string, userMessage: string, maxTokens = 400): Promise<string> {
-  const res = await fetch(OLLAMA_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: MODEL,
-      max_tokens: maxTokens,
-      temperature: 0.9,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user',   content: userMessage  },
-      ],
-    }),
+async function aiChat(systemPrompt: string, userMessage: string, maxOutputTokens = 400): Promise<string> {
+  const result = await generateText({
+    model: geminiModel,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userMessage }],
+    maxOutputTokens,
+    temperature: 0.9,
   });
-
-  if (!res.ok) throw new Error(`Ollama ${res.status}: ${await res.text()}`);
-  const data = await res.json();
-  return data.choices?.[0]?.message?.content ?? '';
+  return result.text;
 }
 
 // Extracts visible text progress from a named JSON string field in a partial buffer
 function extractFieldProgress(buf: string, field: string): string {
   const keyIdx = buf.indexOf(`"${field}"`);
   if (keyIdx === -1) return '';
-  // Skip past key, colon, optional whitespace, then opening quote
-  let i = keyIdx + field.length + 2; // past closing " of key
+  let i = keyIdx + field.length + 2;
   while (i < buf.length && buf[i] !== ':') i++;
-  i++; // skip ':'
+  i++;
   while (i < buf.length && (buf[i] === ' ' || buf[i] === '\t' || buf[i] === '\n')) i++;
   if (i >= buf.length || buf[i] !== '"') return '';
-  i++; // skip opening quote
+  i++;
   let text = '';
   while (i < buf.length) {
     const ch = buf[i];
@@ -63,59 +68,39 @@ function extractFieldProgress(buf: string, field: string): string {
   return text;
 }
 
-// Streams a response; if jsonField is set, only calls onChunk with text from that JSON field
 async function aiChatStream(
   systemPrompt: string,
   userMessage: string,
   onChunk: (text: string) => void,
-  maxTokens = 400,
-  jsonField?: string,
+  maxOutputTokens = 400,
+  // 'story-json': stream only the STORY: prefix part, stop at JSON:
+  // 'json-field:<name>': stream a named field from JSON (legacy)
+  // undefined: stream everything
+  mode?: 'story-json' | string,
 ): Promise<string> {
-  const res = await fetch(OLLAMA_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: MODEL,
-      max_tokens: maxTokens,
-      temperature: 0.9,
-      stream: true,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user',   content: userMessage  },
-      ],
-    }),
+  const result = streamText({
+    model: geminiModel,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userMessage }],
+    maxOutputTokens,
+    temperature: 0.9,
   });
 
-  if (!res.ok) throw new Error(`Ollama ${res.status}: ${await res.text()}`);
+  let fullBuf = '';
+  let prevLen = 0;
 
-  const reader  = res.body!.getReader();
-  const decoder = new TextDecoder();
-  let fullBuf   = '';
-  let lineBuf   = '';
-  let prevLen   = 0;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    lineBuf += decoder.decode(value, { stream: true });
-    const lines = lineBuf.split('\n');
-    lineBuf = lines.pop() ?? '';
-
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue;
-      const data = line.slice(6).trim();
-      if (data === '[DONE]') break;
-      try {
-        const token = JSON.parse(data).choices?.[0]?.delta?.content ?? '';
-        if (!token) continue;
-        fullBuf += token;
-        if (jsonField) {
-          const visible = extractFieldProgress(fullBuf, jsonField);
-          if (visible.length > prevLen) { onChunk(visible.slice(prevLen)); prevLen = visible.length; }
-        } else {
-          onChunk(token);
-        }
-      } catch { /* partial JSON line, skip */ }
+  for await (const chunk of result.textStream) {
+    fullBuf += chunk;
+    if (mode === 'story-json') {
+      const jsonStart = fullBuf.search(/\n+JSON:/i);
+      const visible = jsonStart >= 0 ? fullBuf.slice(0, jsonStart).replace(/^STORY:\s*/i, '').trimEnd() : fullBuf.replace(/^STORY:\s*/i, '');
+      if (visible.length > prevLen) { onChunk(visible.slice(prevLen)); prevLen = visible.length; }
+    } else if (mode?.startsWith('json-field:')) {
+      const field = mode.slice('json-field:'.length);
+      const visible = extractFieldProgress(fullBuf, field);
+      if (visible.length > prevLen) { onChunk(visible.slice(prevLen)); prevLen = visible.length; }
+    } else {
+      onChunk(chunk);
     }
   }
   return fullBuf;
@@ -135,10 +120,10 @@ function parseJSON<T>(raw: string): T | null {
 
 export function warmUpModel(): void {
   if (!isAIEnabled()) return;
-  fetch(OLLAMA_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: MODEL, messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 }),
+  generateText({
+    model: geminiModel,
+    messages: [{ role: 'user', content: 'hi' }],
+    maxOutputTokens: 1,
   }).catch(() => {});
 }
 
@@ -183,47 +168,44 @@ export async function getDMOpening(
     if (onChunk) return await aiChatStream(OPENING_SYSTEM, userMsg, onChunk, 150);
     return await aiChat(OPENING_SYSTEM, userMsg, 150);
   } catch (e) {
-    console.warn('[DM] OpenRouter opening failed, using mock:', e);
+    console.warn('[DM] opening failed, using mock:', e);
     return mockOpening(player, difficulty);
   }
 }
 
 // ─── Situation ────────────────────────────────────────────────────────────────
 
-const SITUATION_SYSTEM = `You are a reactive Dungeon Master for DungeonQuest. Your #1 job: seamless continuity — every scene must grow out of the previous one.
+const SITUATION_SYSTEM = `You are a reactive Dungeon Master for DungeonQuest. Your response has TWO parts — write them in order:
 
-STRICT TRANSITION RULE: The description's FIRST sentence must continue exactly where the last outcome left off. No scene break, no time skip, no fresh setup. The reader should not feel a cut. Only in the second or third sentence may a new development emerge — and only as a natural consequence of what just happened, not a random new event.
+PART 1 — STORY (plain text, no JSON):
+Write 3-4 vivid, atmospheric sentences. For an OPENING scene: establish the specific setting, player name/class, quest, and the immediate danger/scene they walk into. For continuation scenes: the FIRST sentence must continue exactly where the last outcome left off — no hard cut, no time skip. Following sentences: consequences unfold naturally. NEVER repeat any text from story history.
 
-Bad example (hard cut): "You decipher the symbols. Suddenly a skeleton warrior leaps from the shadows."
-Good example (continuous): "As the final symbol clicks into place in your mind, a deep rumble travels through the stone beneath your feet — the mechanism the carvings described is activating, and the floor begins to shift."
+PART 2 — JSON (structured data only):
+{"event": "combat"|"treasure"|"trap"|"mystery"|"merchant"|null, "choices": [{"text": "max 6 words", "type": "combat"|"tactical"|"social"|"risky"|"recovery", "baseRequired": 5}], "environmental_damage": {"type": "poison"|"burning"|"cold", "magnitude": 4}|null, "merchant_inventory": [{"name": "...", "description": "...", "effect": "rollBonus"|"attackBoost"|"armorBoost"|"healBoost"|"fireResistance"|"poisonResistance"|"learnSkill"|"manaRestore", "power": 1, "price": 25, "skill_data": null}]|null}
 
-NEVER REPEAT text from the story history. The player already read it. Your description must contain ONLY new sentences that have never appeared before in the story.
+FORMAT — your response must look exactly like this:
+STORY: [your 3-4 sentences here]
+JSON: {"event": ..., "choices": [...], "environmental_damage": ..., "merchant_inventory": ...}
 
-The setting can be anything — dungeon, forest, mountain pass, swamp, ruins, city, ship, cave, temple. Stay consistent with established context.
-
-Return ONLY valid JSON, no markdown:
-{
-  "event": "combat" | "treasure" | "trap" | "mystery" | null,
-  "description": "2-3 NEW sentences not found anywhere in the story so far. First sentence: direct continuation of the last outcome (no cut). Following sentences: consequence unfolds naturally.",
-  "choices": [
-    {"text": "short action (max 6 words)", "type": "combat"|"tactical"|"social"|"risky"|"recovery", "baseRequired": 5}
-  ]
-}
 Rules:
-- null event (quiet exploration) should occur ~35% of the time: catching breath, finding a clue, eerie silence, a fork in the path, something strange but not immediately threatening
-- Combat/trap events max ~40% total — not every room is a fight
-- Exactly 3 choices, natural for this specific moment
-- baseRequired: aggressive = 12-15, careful/defensive = 5-9 — same range regardless of difficulty
-- Difficulty changes the WORLD, not the dice. Scale your encounters accordingly:
-  · easy: petty threats — rabble bandits, simple locks, weak curses, scared animals
-  · medium: real danger — veteran fighters, spiked pit traps, vengeful spirits, trained beasts
-  · hard: lethal stakes — legendary creatures (ancient dragons, demon lords), catastrophic traps, cursed relics that fight back, horrors that bend reality
-- The world has memory — reference earlier events when it makes sense`;
+- null event (quiet exploration) ~30% of the time
+- Combat/trap events max ~35% total
+- merchant ~10%: fits the setting. When merchant: merchant_inventory has 3-4 items including at least one healBoost and one manaRestore. Choices: ["Browse wares", "Ask about the dungeon", "Leave"].
+- Exactly 3 choices, natural for this moment
+- baseRequired: aggressive = 12-15, careful/defensive = 5-9
+- easy: petty threats; medium: real danger; hard: lethal legendary creatures
+- environmental_damage only for genuinely hazardous environments (lava, poison gas, ice cavern)
+- merchant_inventory null unless event="merchant". Prices: potions 10-25g, passive 30-60g, skill scrolls 80-150g.`;
 
 interface SituationRaw {
   event: DungeonEvent['event'];
-  description: string;
+  description?: string;
   choices: Array<{ text: string; type: ChoiceType; baseRequired: number }>;
+  environmental_damage: { type: 'poison' | 'burning' | 'cold'; magnitude: number } | null;
+  merchant_inventory: Array<{
+    name: string; description: string; effect: Item['effect']; power: number; price: number;
+    skill_data?: { name: string; description: string; type: ChoiceType; base_required: number } | null;
+  }> | null;
 }
 
 export async function getDMSituation(
@@ -246,7 +228,7 @@ export async function getDMSituation(
       `Difficulty: ${difficulty}`,
       `Setting: ${setting}`,
       `Quest: ${quest}`,
-      'Write the OPENING of this adventure. Description must be 3-4 vivid sentences: sentences 1-2 establish the specific setting and quest with atmosphere and detail (mention the player by name and class), sentence 3-4 describe what the player encounters RIGHT NOW as they arrive — the immediate scene that leads to their first choice. Avoid clichés.',
+      'OPENING SCENE — write 4 long, vivid sentences in the STORY: section of your response, like this example: "Kira the mage steps into the flooded undercroft beneath the Cathedral of Vorn, her robes already soaked to the knee as brackish water laps at the crumbling stone columns around her. She has come to seal the Rift of Unmaking — a tear in reality that has been vomiting undead into the city above for three nights straight. The air reeks of salt and rot, and every surface glitters with a thin crust of pale crystal that hums faintly, resonating with the arcane energy leaking from somewhere deeper in the ruin. At the far end of the flooded nave a silhouette stands motionless in the water, facing away from her — too still to be alive, too upright to be a corpse." Match this length and vivid detail, using the actual player name, class, setting and quest.',
     ].join('\n');
   } else {
     const nonSystem   = recentHistory.filter(m => m.role !== 'system' && m.role !== 'chaos');
@@ -265,18 +247,35 @@ export async function getDMSituation(
       `Player class: ${playerClass}`,
       lastAction  ? `LAST PLAYER ACTION: "${lastAction}"` : '',
       lastOutcome ? `WHAT JUST HAPPENED: "${lastOutcome}"` : '',
-      forbiddenOpening ? `FORBIDDEN: Do NOT start your description with "${forbiddenOpening}" or anything similar.` : '',
-      'Write the next scene with 2-3 COMPLETELY NEW sentences. Continue directly from what just happened. Do not reuse any phrasing from above.',
+      forbiddenOpening ? `FORBIDDEN: Do NOT start your STORY: section with "${forbiddenOpening}" or anything similar.` : '',
+      'Write the next scene. Your STORY: section MUST be 3 complete, atmospheric sentences (minimum 60 words). Continue directly from what just happened. Do not reuse any phrasing from above.',
     ].filter(Boolean).join('\n\n');
   }
 
   try {
     const raw  = onChunk
-      ? await aiChatStream(SITUATION_SYSTEM, userMsg, onChunk, 600, 'description')
-      : await aiChat(SITUATION_SYSTEM, userMsg, 600);
-    const data = parseJSON<SituationRaw>(raw);
-    if (!data || !data.description || !Array.isArray(data.choices)) {
-      console.warn('[DM] situation bad shape, raw:', raw?.slice(0, 200));
+      ? await aiChatStream(SITUATION_SYSTEM, userMsg, onChunk, 800, 'story-json')
+      : await aiChat(SITUATION_SYSTEM, userMsg, 800);
+
+    // Parse STORY: / JSON: format
+    const storyMatch = raw.match(/STORY:\s*([\s\S]*?)(?=\n+JSON:)/i);
+    const description = storyMatch?.[1]?.trim() ?? '';
+
+    // Extract JSON robustly — handles optional markdown code fences Gemini adds
+    const jsonSectionIdx = raw.search(/JSON:/i);
+    let data: SituationRaw | null = null;
+    if (jsonSectionIdx >= 0) {
+      const afterJson = raw.slice(jsonSectionIdx + 5)
+        .replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+      const braceStart = afterJson.indexOf('{');
+      const braceEnd   = afterJson.lastIndexOf('}');
+      if (braceStart >= 0 && braceEnd > braceStart) {
+        data = parseJSON<SituationRaw>(afterJson.slice(braceStart, braceEnd + 1));
+      }
+    }
+
+    if (!description || !data || !Array.isArray(data.choices)) {
+      console.warn('[DM] situation bad shape, raw:', raw?.slice(0, 300));
       throw new Error('bad shape');
     }
 
@@ -286,7 +285,32 @@ export async function getDMSituation(
       baseRequired: Number(c.baseRequired ?? 10),
     }));
 
-    return { event: data.event ?? null, description: data.description, choices };
+    const environmentalDamage = data.environmental_damage?.type
+      ? { type: data.environmental_damage.type, magnitude: Number(data.environmental_damage.magnitude ?? 4) }
+      : null;
+
+    const merchantInventory = Array.isArray(data.merchant_inventory)
+      ? data.merchant_inventory.map(mi => ({
+          price: Number(mi.price ?? 20),
+          item: {
+            id:          `shop-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            name:        String(mi.name ?? 'Unknown Item'),
+            description: String(mi.description ?? ''),
+            effect:      (mi.effect ?? 'rollBonus') as Item['effect'],
+            power:       Number(mi.power ?? 1),
+            ...(mi.skill_data ? {
+              skillData: {
+                name:         mi.skill_data.name,
+                description:  mi.skill_data.description,
+                type:         (mi.skill_data.type as ChoiceType) ?? 'tactical',
+                baseRequired: Number(mi.skill_data.base_required ?? 10),
+              },
+            } : {}),
+          } as import('../types').Item,
+        }))
+      : null;
+
+    return { event: data.event ?? null, description, choices, environmentalDamage, merchantInventory };
   } catch (e) {
     console.warn('[DM] situation failed, using mock:', e);
     return mockSituation(difficulty, prevChoiceType);
@@ -301,9 +325,11 @@ Return ONLY valid JSON, no markdown, no extra text:
   "story": "2-3 sentences describing what happened, reflecting roll success/failure",
   "damage": number | null,
   "heal": number | null,
-  "item": {"name": "...", "description": "effect summary", "effect": "rollBonus"|"attackBoost"|"armorBoost"|"healBoost"|"fireResistance"|"poisonResistance", "power": 1} | null,
+  "gold": number | null,
+  "item": {"name": "...", "description": "effect summary", "effect": "rollBonus"|"attackBoost"|"armorBoost"|"healBoost"|"fireResistance"|"poisonResistance"|"learnSkill"|"manaRestore", "power": 1, "skill_data": {"name": "...", "description": "...", "type": "combat"|"tactical"|"social"|"risky"|"recovery", "base_required": 9} | null} | null,
   "chaos_story": "string | null",
-  "quest_complete": boolean
+  "quest_complete": boolean,
+  "apply_effect": {"type": "poison"|"burning"|"paralysis"|"blessed"|"strengthened", "duration": 2, "magnitude": 5} | null
 }
 Rules:
 - damage: null on great success; small on success (~30% of base); full on fail; double on fumble
@@ -311,19 +337,40 @@ Rules:
 - Difficulty sets the THREAT TYPE, not just numbers. easy=rats and bandits, medium=ogres and cursed traps, hard=ancient dragons and reality-bending horrors. Name the specific creature or trap in your story.
 - heal: only if action type is "recovery" AND succeeded (heal = 10-25)
 - item: only if event="treasure" AND roll succeeded; power 1-2 common, 3-5 on great success
+  · For skill scrolls: effect="learnSkill", include skill_data with a unique ability fitting the scene. Rare (great success only).
+  · Otherwise: skill_data is null.
 - If giving an item, naturally mention finding it in the story
 - story must clearly reflect whether the player succeeded or failed
-- chaos_story: ONLY if chaos=true in the prompt. Write 1-2 sentences of maximum absurdity — surreal, darkly funny, completely unhinged. Examples: tripping and impaling yourself on your own sword, sneezing so hard you dislocate your spine, your shoelaces transforming into angry eels, accidentally summoning a tax collector from another dimension. The more unexpected and ridiculous the better. null if chaos=false.
-- If skill_used is provided: the player used their personal class skill. React specifically to THAT skill in THIS environment — Fireball in a cave might ignite gas and collapse a wall revealing a passage, Fireball against a troll might melt its regenerating flesh. Blink in a fight lets them teleport behind the enemy. Holy Light in darkness might reveal a hidden inscription. Make the skill feel meaningful and contextually impactful. Higher level = more dramatic effect.
-- quest_complete: true ONLY when the main quest objective from the opening story is fully achieved (villain defeated, heir rescued, rift sealed, artifact recovered, etc.). Not for partial victories. If the quest is complete, end your story with a satisfying conclusion. Otherwise always false.`;
+- chaos_story: ONLY if chaos=true in the prompt. Write 1-2 sentences of maximum absurdity — surreal, darkly funny, completely unhinged. null if chaos=false.
+- If skill_used is provided: react specifically to THAT skill in THIS environment. Make it feel contextually impactful. Higher level = more dramatic effect.
+- quest_complete: true ONLY when the main quest objective is fully achieved. Otherwise always false.
+- gold: coins/valuables found or looted. null for most actions. Give gold when:
+  · combat success: enemy drops coins → easy 5-15g, medium 15-35g, hard 30-70g
+  · treasure event success: easy 10-25g, medium 25-60g, hard 50-120g
+  · great success/critical: bonus gold on top. null on failure/fumble.
+  Mention finding gold naturally in the story.
+- apply_effect: null most of the time. Apply sparingly when the narrative clearly calls for it:
+  · poison: trap/enemy attack involving toxins on fail → duration 3, magnitude 5
+  · burning: fire trap, dragon breath, lava contact on fail → duration 2, magnitude 8
+  · paralysis: heavy combat blow, stunning magic on fail → duration 1-2, magnitude 5
+  · blessed: divine prayer/holy shrine success → duration 3, magnitude 3
+  · strengthened: warrior power-up, magical enhancement → duration 2, magnitude 3`;
 
 interface OutcomeRaw {
   story: string;
   damage: number | null;
   heal: number | null;
-  item: { name: string; description: string; effect: Item['effect']; power: number } | null;
+  gold: number | null;
+  item: {
+    name: string;
+    description: string;
+    effect: Item['effect'];
+    power: number;
+    skill_data?: { name: string; description: string; type: ChoiceType; base_required: number } | null;
+  } | null;
   chaos_story: string | null;
   quest_complete: boolean;
+  apply_effect: { type: string; duration: number; magnitude: number } | null;
 }
 
 export async function getDMOutcome(
@@ -336,6 +383,7 @@ export async function getDMOutcome(
   isChaos: boolean,
   inventory: Item[],
   skillUsed: { name: string; level: number; description: string } | null,
+  currentScene: string | null,
   onChunk?: (text: string) => void,
 ): Promise<DungeonEvent> {
   if (!isAIEnabled()) return mockOutcome(choiceType, eventType, effectiveRoll, requiredRoll, difficulty);
@@ -349,18 +397,19 @@ export async function getDMOutcome(
     `Action type: ${choiceType}`,
     `Player chose: "${choiceText}"`,
     skillUsed ? `skill_used: ${skillUsed.name} (Level ${skillUsed.level}) — ${skillUsed.description}` : 'skill_used: none',
+    currentScene ? `CURRENT SCENE: ${currentScene}` : '',
     `Event: ${eventType ?? 'quiet room'}`,
     `Roll result: ${rollTag}`,
     `Required roll: ${requiredRoll}+`,
     `Difficulty: ${difficulty}`,
     `chaos: ${isChaos}`,
     `Player already owns: ${heldItems} — if generating an item, use a completely different name.`,
-    'Generate the outcome.',
-  ].join('\n');
+    'Generate the outcome. React specifically to what is in the current scene — do not default to generic results.',
+  ].filter(Boolean).join('\n');
 
   try {
     const raw  = onChunk
-      ? await aiChatStream(OUTCOME_SYSTEM, userMsg, onChunk, 400, 'story')
+      ? await aiChatStream(OUTCOME_SYSTEM, userMsg, onChunk, 400, 'json-field:story')
       : await aiChat(OUTCOME_SYSTEM, userMsg);
     const data = parseJSON<OutcomeRaw>(raw);
     if (!data || !data.story) throw new Error('bad shape');
@@ -373,23 +422,40 @@ export async function getDMOutcome(
         description: data.item.description ?? '',
         effect:      data.item.effect ?? 'rollBonus',
         power:       Number(data.item.power ?? 1),
+        ...(data.item.skill_data ? {
+          skillData: {
+            name:         data.item.skill_data.name,
+            description:  data.item.skill_data.description,
+            type:         (data.item.skill_data.type as ChoiceType) ?? 'tactical',
+            baseRequired: Number(data.item.skill_data.base_required ?? 10),
+          },
+        } : {}),
       };
     }
 
-    const story = data.story;
+    const applyEffect = data.apply_effect?.type
+      ? {
+          id:        `eff-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          type:      data.apply_effect.type as import('../types').StatusEffectType,
+          duration:  Number(data.apply_effect.duration ?? 2),
+          magnitude: Number(data.apply_effect.magnitude ?? 5),
+        }
+      : null;
 
     return {
-      story,
+      story:         data.story,
       event:         eventType,
       item,
       damage:        data.damage        ?? null,
       heal:          data.heal          ?? null,
+      goldGained:    data.gold           ?? null,
       chaosStory:    data.chaos_story   ?? null,
       questComplete: data.quest_complete ?? false,
       choices:       [],
+      applyEffect,
     };
   } catch (e) {
-    console.warn('[DM] OpenRouter outcome failed, using mock:', e);
+    console.warn('[DM] outcome failed, using mock:', e);
     return mockOutcome(choiceType, eventType, effectiveRoll, requiredRoll, difficulty);
   }
 }

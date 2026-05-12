@@ -6,6 +6,7 @@ export interface ChoiceDisplay {
   requiredRoll: number;
   type: ChoiceType;
   isClassSkill?: boolean;
+  manaCost?: number;
 }
 
 interface Props {
@@ -13,13 +14,14 @@ interface Props {
   onChoice: (choice: ChoiceDisplay) => void;
   disabled?: boolean;
   label?: string;
+  playerMana?: number;
 }
 
-export default function ChoiceButtons({ choices, onChoice, disabled = false, label = 'Choose your action:' }: Props) {
+export default function ChoiceButtons({ choices, onChoice, disabled = false, label = 'Choose your action:', playerMana }: Props) {
   if (choices.length === 0) return null;
 
   const regular = choices.filter(c => !c.isClassSkill);
-  const skill   = choices.find(c => c.isClassSkill);
+  const skills  = choices.filter(c => c.isClassSkill);
 
   return (
     <View style={styles.container}>
@@ -37,18 +39,27 @@ export default function ChoiceButtons({ choices, onChoice, disabled = false, lab
           <Text style={styles.requirement}>Need {choice.requiredRoll}+</Text>
         </TouchableOpacity>
       ))}
-      {skill && (
-        <TouchableOpacity
-          style={[styles.skillButton, disabled && styles.disabled]}
-          onPress={() => onChoice(skill)}
-          disabled={disabled}
-          activeOpacity={0.75}
-        >
-          <Text style={styles.skillIcon}>✨</Text>
-          <Text style={styles.skillText}>{skill.text}</Text>
-          <Text style={styles.skillRequirement}>Need {skill.requiredRoll}+</Text>
-        </TouchableOpacity>
-      )}
+      {skills.map((skill, i) => {
+        const noMana = playerMana !== undefined && skill.manaCost !== undefined && playerMana < skill.manaCost;
+        return (
+          <TouchableOpacity
+            key={i}
+            style={[styles.skillButton, (disabled || noMana) && styles.disabled]}
+            onPress={() => onChoice(skill)}
+            disabled={disabled || noMana}
+            activeOpacity={0.75}
+          >
+            <Text style={styles.skillIcon}>✨</Text>
+            <Text style={[styles.skillText, noMana && styles.skillTextDim]}>{skill.text}</Text>
+            <View style={styles.skillMeta}>
+              {skill.manaCost !== undefined && (
+                <Text style={[styles.skillMana, noMana && styles.skillManaDim]}>💧{skill.manaCost}</Text>
+              )}
+              <Text style={styles.skillRequirement}>Need {skill.requiredRoll}+</Text>
+            </View>
+          </TouchableOpacity>
+        );
+      })}
     </View>
   );
 }
@@ -74,5 +85,9 @@ const styles = StyleSheet.create({
   skillButton:      { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1a0f2e', borderRadius: 10, borderWidth: 1.5, borderColor: '#c9a227', paddingVertical: 14, paddingHorizontal: 16, gap: 12 },
   skillIcon:        { fontSize: 16, width: 20, textAlign: 'center' },
   skillText:        { color: '#f4d03f', fontSize: 14, fontWeight: '700', flex: 1 },
+  skillTextDim:     { color: '#6c5a8e' },
+  skillMeta:        { alignItems: 'flex-end', gap: 2 },
+  skillMana:        { color: '#6c3483', fontSize: 10, fontWeight: '700' },
+  skillManaDim:     { color: '#3d1f6b' },
   skillRequirement: { color: '#c9a227', fontSize: 11, fontWeight: '600' },
 });

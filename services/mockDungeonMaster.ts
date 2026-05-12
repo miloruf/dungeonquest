@@ -227,15 +227,19 @@ const ITEM_BASES: Record<Item['effect'], string[]> = {
   healBoost:        ['Healing Crystal', 'Life Pendant', 'Vitality Rune', 'Mending Stone', 'Recovery Vial'],
   fireResistance:   ['Ember Cloak', 'Flame Ward', "Dragon's Scale", 'Asbestos Ring', 'Inferno Guard'],
   poisonResistance: ['Antidote Flask', 'Venom Ward', 'Herbal Charm', 'Toxin Glyph', 'Poison Mask'],
+  learnSkill:       ['Scroll of Shadows', 'Arcane Codex', 'Tome of Blades', 'Mystic Scroll', 'Ancient Grimoire'],
+  manaRestore:      ['Mana Potion', 'Arcane Elixir', 'Ether Flask', 'Mana Crystal', 'Mystic Brew'],
 };
 
 const EFFECT_DESC: Record<Item['effect'], (p: number) => string> = {
   rollBonus:        p => `+${p} to all dice rolls`,
   attackBoost:      p => `-${p} required for combat actions`,
   armorBoost:       p => `-${p} required for defensive actions`,
-  healBoost:        p => `-${p} required for recovery actions`,
+  healBoost:        p => `Restores ${p * 10} HP`,
   fireResistance:   p => `-${p} damage from fire traps`,
   poisonResistance: p => `-${p} damage from poison traps`,
+  learnSkill:       _p => 'Grants a new class skill when read',
+  manaRestore:      p => `Restores ${p * 15} Mana`,
 };
 
 const POWER_RANGES: Record<Item['effect'], [[number, number], [number, number]]> = {
@@ -245,6 +249,8 @@ const POWER_RANGES: Record<Item['effect'], [[number, number], [number, number]]>
   healBoost:        [[1, 2], [2, 4]],
   fireResistance:   [[1, 2], [2, 3]],
   poisonResistance: [[1, 2], [2, 3]],
+  learnSkill:       [[1, 1], [1, 1]],
+  manaRestore:      [[1, 2], [2, 4]],
 };
 
 function generateItem(difficulty: GameRoom['difficulty'], rare: boolean): Item {
@@ -306,10 +312,6 @@ function pick<T>(arr: T[]): T {
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
-
-export function getMaxTurns(difficulty: GameRoom['difficulty']): number {
-  return { easy: 8, medium: 12, hard: 15 }[difficulty];
-}
 
 export function getOpeningStory(player: Player, difficulty: GameRoom['difficulty']): string {
   const intro   = pick(CLASS_INTROS[player.class]);

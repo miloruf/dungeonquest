@@ -5,34 +5,14 @@ import {
   TextInput, TouchableOpacity, View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import ClassSelector, { CLASS_HP } from '../components/ClassSelector';
+import ClassSelector from '../components/ClassSelector';
+import { makePlayer } from '../constants/game';
 import { useGame } from '../context/gameContext';
 import { createRoom, joinRoom } from '../services/roomService';
 import { Player } from '../types';
 
 type Mode = 'create' | 'join';
 type Difficulty = 'easy' | 'medium' | 'hard';
-
-const STARTING_SKILLS: Record<Player['class'], { name: string; description: string; type: import('../types').ChoiceType; baseRequired: number }> = {
-  warrior: { name: 'Cleave',     description: 'A powerful horizontal slash that hits everything in arc', type: 'combat',   baseRequired: 10 },
-  mage:    { name: 'Fireball',   description: 'Hurl a ball of arcane fire that explodes on impact',      type: 'risky',    baseRequired: 11 },
-  healer:  { name: 'Holy Light', description: 'Channel divine energy to heal and blind undead',          type: 'recovery', baseRequired: 7  },
-};
-
-function makePlayer(name: string, cls: Player['class']): Player {
-  const hp = CLASS_HP[cls];
-  const sk = STARTING_SKILLS[cls];
-  return {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    name: name.trim(),
-    class: cls,
-    hp,
-    maxHp: hp,
-    inventory: [],
-    activeEffects: [],
-    skills: [{ id: 'skill-1', ...sk, level: 1, useCount: 0 }],
-  };
-}
 
 const DIFF_LABELS: Record<Difficulty, string> = { easy: 'Leicht', medium: 'Mittel', hard: 'Schwer' };
 
