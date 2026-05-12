@@ -1,48 +1,63 @@
 # DungeonQuest — Project Handoff
 
-This file is kept up to date after every change session. If you are picking up this project in a new conversation (Cursor, Claude Code, etc.), read this file first — it contains everything you need to continue without re-reading the full codebase.
+This file is kept up to date after every session. Read this first in any new conversation — it contains everything needed to continue without re-reading the full codebase.
 
 ---
 
 ## What is this project?
 
-A D&D-inspired mobile game built with **React Native + Expo** for the UEK 335 school module (Mobile Apps entwickeln). Players explore dungeons, fight enemies, find loot, and level up their characters.
+A D&D-inspired mobile game built with **React Native + Expo** for the UEK 335 school module (Mobile Apps entwickeln). Players explore dungeons, fight enemies, find loot, and level up class skills.
 
 **Tech stack:**
 - React Native + Expo SDK 54 + TypeScript (strict)
-- Expo Router v6 (file-based navigation)
-- Supabase JS SDK (real-time multiplayer, not yet integrated into game screens)
+- Expo Router v5 (file-based navigation)
+- Vercel AI SDK v6 (`ai`, `@ai-sdk/openai`) — streaming + generation
+- Vercel AI Gateway → `google/gemini-3-flash` as the AI Dungeon Master
+- Supabase JS SDK (real-time multiplayer)
 - React Context for global game state
-- No real Claude API yet — mock Dungeon Master
+
+---
+
+## Engineering Rules (always apply these)
+
+1. **Dead-code check:** After writing or changing code, verify it is actually called/imported. Delete it if nothing uses it.
+2. **Full data-flow diagnosis:** When debugging, follow the complete path from trigger → service → state → render. Never stop at a surface symptom.
+3. **Root-cause-first:** Identify the exact root cause in the code before writing any fix.
 
 ---
 
 ## Current Status
 
-### ✅ Done
-- **Solo flow** fully playable: `solo.tsx` → `game.tsx` → `result.tsx`
-- **5 UI components**: HPBar, ClassSelector, DiceRoller, StoryBox, ChoiceButtons
-- **Mock Dungeon Master** with situation/outcome split (see Architecture section)
-- **Difficulty system**: Easy (Need 7+, 8 turns), Medium (Need 10+, 12 turns), Hard (Need 14+, 15 turns)
-- **Class system**: Warrior/Mage/Healer each get roll modifiers on relevant action types
-- **Item system**: Dynamically generated (prefix + noun + effect + power), 6 effect types
-- **Roll bonus items**: stack and apply to effective dice roll
-- **Action-based required rolls**: each choice has a type (combat/tactical/social/risky/recovery) with its own base difficulty
-- **Situation/outcome split**: DM first describes what you encounter, THEN you pick how to respond, THEN you roll
-- **Previous action biases next encounter**: resting → quiet rooms, fighting → more combat
-- **Recovery actions heal HP**
-- **Supabase**: client, room service, SQL schema — wired up but multiplayer screens not implemented
+### ✅ Fully implemented
+- Solo flow: `solo.tsx` → `game.tsx` → `result.tsx`
+- Multiplayer flow: `room.tsx` → `lobby.tsx` → `game.tsx` (Supabase Realtime, turn system)
+- **Real AI Dungeon Master** via Vercel AI Gateway (streaming, STORY:/JSON: format)
+- Mock DM fallback (`mockDungeonMaster.ts`) when no API key
+- Difficulty system: easy / medium / hard
+- Class system: warrior / mage / healer with stat + roll modifiers
+- Item system: procedurally generated, 8 effect types, sell/buy/use
+- Gold system: earned from combat/treasure, spent at merchants
+- Merchant events: buy/sell items mid-dungeon
+- Status effects: poison, burning, paralysis, blessed, strengthened — tick per turn, expire, show in EffectsBar
+- Environmental damage: lava/poison gas/ice deals per-turn damage
+- Class skills as 4th action option (mana cost, levels up on use, max level 3)
+- Mana system: skills cost mana, manaRestore items refill it
+- Skill items (learnSkill): scrolls that teach new skills when used
+- Natural story ending: DM can set `questComplete: true` to end the game
+- Chaos events: 1% chance on normal rolls, 50% on fumble — surreal bonus story
+- Game UI refactored into small components (see Architecture)
 
-### ✅ Done (continued)
-- **Multiplayer flow**: `room.tsx` → `lobby.tsx` → `game.tsx` fully wired
-- **room.tsx**: Create (name + class + difficulty → Supabase) or Join (name + class + room code) tabs
-- **lobby.tsx**: Supabase Realtime player list, host Start button, auto-navigates to /game when status='playing'
-- **game.tsx multiplayer**: Supabase subscription, `isMyTurn` check, turn indicator, state sync after each action, "Warte auf..." for non-turn players
-
-### 🔲 Not Done
-- Real Claude API integration (mock DM used throughout)
-- Roguelike mode (planned, see below)
-- Dungeon Crawler spatial exploration system (planned, see below)
+### 🔲 Planned (do NOT implement without user confirmation)
+| # | Feature |
+|---|---------|
+| 6 | Extended skill system: larger AI-generated skill pool, Soulstones as boss drops |
+| 7 | Rest system: Short Rest / Long Rest mechanic |
+| 8 | Roguelike mode: persistent character, permadeath, loot extraction |
+| 9 | 3D D20 dice with Three.js |
+| 10 | Tabletop view for the adventure |
+| 12 | AI companions |
+| 13 | Free text action input: text field + "Calculate" button that queries AI for estimated roll cost before committing |
+| — | Markdown in DM story text: install `react-native-markdown-display`, update StoryBox, allow Markdown in DM prompts |
 
 ---
 
@@ -50,123 +65,131 @@ A D&D-inspired mobile game built with **React Native + Expo** for the UEK 335 sc
 
 ```
 app/
-  _layout.tsx        Root Stack navigator, wraps everything in GameProvider
-  index.tsx          Home screen — Solo Adventure / Multiplayer buttons
-  solo.tsx           Hero creation: name, class, difficulty → initialises GameState
-  game.tsx           Main game loop (see Game Loop section)
-  result.tsx         Win/loss screen with stats + inventory
-  room.tsx           STUB — create/join room by code
-  lobby.tsx          STUB — waiting room with Supabase Realtime
+  _layout.tsx        Root Stack + GameProvider (wraps everything)
+  index.tsx          Home screen — Solo / Multiplayer
+  solo.tsx           Hero creation → calls makePlayer() → navigates to /game
+  room.tsx           Create or join multiplayer room (Supabase)
+  lobby.tsx          Waiting room — Supabase Realtime player list, host starts
+  game.tsx           Main game loop (~290 lines, all logic here)
+  result.tsx         Win/loss screen with stats
 
 components/
-  HPBar.tsx          Colour-coded health bar (green >50%, yellow >25%, red ≤25%)
-  ClassSelector.tsx  3-card class picker, exports CLASS_HP constant
-  DiceRoller.tsx     Animated d20, shows Need X+, bonus line, success/fail label
-  StoryBox.tsx       Scrollable DM narrative chat, auto-scrolls to bottom
-  ChoiceButtons.tsx  Numbered action buttons with Need X+ per button
+  GameHeader.tsx         Title bar + AI badge + turn counter
+  PlayerStatusBar.tsx    Name, class, HP bar, mana bar, gold, inventory toggle
+  EffectsBar.tsx         Active status effect badges + environmental damage badge
+  PhaseControls.tsx      Renders the correct UI for current phase (choose/roll/processing/merchant)
+  ChoiceButtons.tsx      Action buttons with Need X+ and mana cost
+  DiceRoller.tsx         Animated d20 — shows required roll, bonus, success/fail
+  StoryBox.tsx           Scrollable DM narrative — shows storyHistory + streamingMessage
+  InventoryPanel.tsx     Horizontal item scroll with Use button (consumables only)
+  MerchantPanel.tsx      Buy/sell UI shown during merchant events
+  HPBar.tsx              Colour-coded HP bar (green/yellow/red)
+  ManaBar.tsx            Mana bar (purple)
+  ClassSelector.tsx      3-card class picker
+
+constants/
+  game.ts            STATUS_CONFIG, CLASS_HP, CLASS_MANA, STARTING_SKILLS,
+                     makePlayer(), EFFECT_ICONS, CONSUMABLE_EFFECTS, sellPrice()
 
 services/
-  mockDungeonMaster.ts   Active DM — see Game Loop section
-  dungeonMaster.ts       Real Claude API (unused, for future)
-  supabase.ts            Supabase client (reads from .env)
-  roomService.ts         createRoom, joinRoom, subscribeToRoom etc.
+  dungeonMaster.ts       Active AI DM — Vercel AI Gateway (see DM section)
+  mockDungeonMaster.ts   Fallback DM — no API key needed, procedural
+  supabase.ts            Supabase client
+  roomService.ts         createRoom, joinRoom, subscribeToRoom, updateRoomState
 
 context/
-  gameContext.tsx    GameState, useGame(), addItem(), updatePlayerHP(),
-                     setDiceResult(), addStoryMessage(), setGameState()
+  gameContext.tsx    GameState, useGame(), addItem(), removeItem(),
+                     updatePlayerHP(), addStoryMessage(), setGameState()
 
-types/index.ts       All shared interfaces — Item, Player, GameRoom, Message,
-                     ChoiceType, Choice, DungeonEvent, Situation, GameState
+types/index.ts       All shared types — Item, Player, Skill, GameRoom,
+                     Message, ChoiceType, Choice, DungeonEvent, Situation, GameState
 ```
 
 ---
 
-## Game Loop (how game.tsx works)
-
-Each turn has 3 phases:
+## Game Loop (game.tsx)
 
 ```
-'choose'     → Situation description already in StoryBox
-               ChoiceButtons shown with Need X+ per action
-
-'roll'       → Player picked action (stored as pendingChoice)
-               DiceRoller active, shows required roll + bonus
-
-'processing' → Roll processed, outcome generated
-               After 1200ms: next situation generated → back to 'choose'
+'choose'     → Situation description in StoryBox, choice buttons shown
+'roll'       → pendingChoice set, DiceRoller active
+'processing' → getDMOutcome() called, outcome added to history, 1200ms pause,
+               then getDMSituation() called for next scene → back to 'choose'
+'merchant'   → MerchantPanel shown instead of choices
 ```
 
-Key functions in `mockDungeonMaster.ts`:
-- `generateSituation(difficulty, prevChoiceType)` — picks event type (biased by previous action), picks description from SITUATION_STORIES, returns choice list
-- `generateOutcome(choiceType, eventType, effectiveRoll, requiredRoll, difficulty)` — generates outcome story, calculates damage/heal/loot based on success margin
+**Turn flow in detail:**
+1. Mount: `getDMSituation(..., player)` with `openingPlayer` → generates first scene (streams via `onChunk`)
+2. Player clicks a choice → `setPendingChoice`, `setPhase('roll')`
+3. Player rolls → `handleRoll(rawRoll)`:
+   - `effectiveRoll = rawRoll + rollBonus`
+   - `getDMOutcome(...)` → applies damage/heal/item/gold/effect
+   - Ticks active status effects (poison/burning deal damage, expired ones removed)
+   - Applies environmental damage if present
+   - 1200ms pause, then `getDMSituation(...)` → new scene
+4. If `hp <= 0` → `/result?won=false`, if `questComplete` → `/result?won=true`
 
 **Roll mechanics:**
-- Player sees `Need X+` on each choice button (adjusted for class + items)
-- Player selects choice → fresh DiceRoller appears
-- Raw roll + rollBonus items = effectiveRoll
-- effectiveRoll vs requiredRoll → margin determines outcome tier (fumble/fail/success/great)
-
-**Class modifiers** (applied to choice's baseRequired):
-| Class   | Modifier |
-|---------|----------|
-| Warrior | combat −3, risky −1 |
-| Mage    | social −2, tactical −1 |
-| Healer  | recovery −3, tactical −1 |
-
-**Item effects on required rolls:**
-- `attackBoost` → −power for combat/risky choices
-- `armorBoost` → −power for tactical choices
-- `healBoost` → −power for recovery choices
-- `rollBonus` → +power added directly to dice roll
+- Each choice has `baseRequired` adjusted by class modifiers + item effects + active effects
+- Class modifiers (warrior: combat−3, risky−1 | mage: social−2, tactical−1 | healer: recovery−3, tactical−1)
+- Item mods: attackBoost→combat/risky, armorBoost→tactical, healBoost→recovery (all subtract from required)
+- paralysis adds to required roll; blessed/strengthened reduce it
 
 ---
 
-## Planned Features (do NOT implement without user confirmation)
+## AI Dungeon Master (dungeonMaster.ts)
 
-### Multiplayer (next immediate priority)
-- `room.tsx`: Generate 6-char room code (create) or enter code (join)
-- `lobby.tsx`: Show connected players via Supabase Realtime subscription, class selection per player, host starts game
-- Game screen needs to handle multiple players and turn order
+### Provider setup
+```ts
+const GATEWAY_URL = 'https://ai-gateway.vercel.sh/v1';
+const MODEL       = 'google/gemini-3-flash';
+// expo/fetch required for React Native streaming (not web)
+const nativeFetch = Platform.OS !== 'web' ? require('expo/fetch').fetch : undefined;
+const gatewayProvider = createOpenAI({ baseURL: GATEWAY_URL, apiKey: process.env.EXPO_PUBLIC_AI_GATEWAY_API_KEY, fetch: nativeFetch });
+```
 
-### Roguelike Mode
-- Persistent character (name, class, inventory) across multiple dungeon runs
-- Permadeath: character deleted on death
-- Loot extraction mechanic: choose what to keep before dungeon ends
-- Between-dungeon merchant screen
-- Graveyard screen showing dead characters
-- Level system: XP per turn survived, permanent stat bonuses on level-up
-- Cursed items: powerful but with negative side effects
-- Item sets: 3 matching items = set bonus
-
-### Dungeon Crawler Spatial Exploration (applies to both modes)
-- DM describes rooms spatially: corridors, chambers, forks, dead ends
-- Choices become navigation: "Take left path", "Enter the cave", "Go straight"
-- GameState gets `currentRoom: { type, description, exits: Exit[] }` field
-- Exits have `{ direction, hint, requiredRoll? }`
-- On Hard mode: fewer hints about what lies ahead
-- This is when the real Claude API should be integrated — hardcoded spatial descriptions don't scale
-
-### Claude API Integration (do with Dungeon Crawler)
-- `services/dungeonMaster.ts` already has the skeleton
-- Model: `claude-sonnet-4-6` (or latest available)
-- Replace `generateSituation` + `generateOutcome` with a single Claude call
-- System prompt enforces JSON output matching `DungeonEvent` schema
-- Add API key to `.env` as `EXPO_PUBLIC_CLAUDE_API_KEY` (or use server-side proxy)
-
----
-
-## Environment & Keys
+### Response format — CRITICAL
+Situations use a two-part `STORY:/JSON:` format. **Never change this back to embedding description inside JSON** — Gemini compresses JSON string values regardless of length instructions.
 
 ```
-.env (gitignored — never commit)
+STORY: [3-4 vivid atmospheric sentences]
+JSON: {"event": "combat"|"treasure"|...|null, "choices": [...], "environmental_damage": ..., "merchant_inventory": ...}
+```
+
+### Parsing — CRITICAL rules
+- **Regex for story:** `/STORY:\s*([\s\S]*?)(?=\n+JSON:)/i` — uses `\n+` (not `\n`) because Gemini inserts blank lines
+- **Regex for streaming visibility:** `/\n+JSON:/i` — same reason
+- **JSON extraction:** Does NOT use a simple regex — strips markdown code fences first (Gemini wraps JSON in backticks despite instructions), then finds first `{` and last `}`:
+  ```ts
+  const afterJson = raw.slice(jsonSectionIdx + 5).replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+  data = parseJSON(afterJson.slice(afterJson.indexOf('{'), afterJson.lastIndexOf('}') + 1));
+  ```
+- **User messages must say "STORY: section"** — NOT "description field". The user message used to reference the old JSON format; that caused the model to put narrative inside JSON, breaking the parse.
+
+### Streaming
+- `aiChatStream` with mode `'story-json'` streams only the STORY: part (hides JSON from user)
+- `aiChatStream` with mode `'json-field:story'` streams only the `story` field from outcome JSON
+- `makeOnChunk()` in game.tsx creates a delta accumulator: `let acc=''; return (chunk) => { acc+=chunk; setStreamingText(acc); }`
+- `setStreamingText('')` is called after the function returns — clears the streaming overlay once story is in history
+
+### Functions
+- `getDMOpening(player, difficulty, onChunk?)` — standalone opening (unused in current flow, situation opening used instead)
+- `getDMSituation(difficulty, prevChoiceType, recentHistory, playerClass, onChunk?, openingPlayer?)` — generates next scene; pass `openingPlayer` for the first turn
+- `getDMOutcome(...)` — generates outcome of player's action; returns `DungeonEvent`
+- `warmUpModel()` — called on mount, sends a 1-token ping to warm the model
+
+---
+
+## Environment
+
+```
+.env (gitignored — NEVER commit)
+  EXPO_PUBLIC_AI_GATEWAY_API_KEY=...   Vercel AI Gateway key
   EXPO_PUBLIC_SUPABASE_URL=...
   EXPO_PUBLIC_SUPABASE_ANON_KEY=...
-
-.env.example (committed — safe template)
 ```
 
 Supabase project ref: `powkwdwykfqljdfhfkca`
-Supabase rooms table: see `docs/schema.sql`
+GitHub repo: `github.com/miloruf/dungeonquest`
 
 ---
 
@@ -175,8 +198,8 @@ Supabase rooms table: see `docs/schema.sql`
 ```bash
 npx expo start          # Start dev server (scan QR with Expo Go)
 npx expo start --web    # Open in browser at localhost:8081
-npx tsc --noEmit        # Type-check (must pass before committing)
-git push                # Push to github.com/miloruf/dungeonquest
+npx tsc --noEmit        # Type-check (must pass before every commit)
+git push                # Push to main
 ```
 
 ---
@@ -185,17 +208,14 @@ git push                # Push to github.com/miloruf/dungeonquest
 
 | Date       | What changed |
 |------------|-------------|
-| 2026-05-11 | Initial solo flow: solo.tsx, game.tsx, result.tsx — basic game loop working |
-| 2026-05-11 | 5 UI components built: HPBar, ClassSelector, DiceRoller, StoryBox, ChoiceButtons |
-| 2026-05-11 | Supabase setup: client, room service, SQL schema |
-| 2026-05-11 | Difficulty system: Easy/Medium/Hard with different turn counts and required rolls |
-| 2026-05-11 | Dynamic item generation (procedural prefix+noun+effect+power) |
-| 2026-05-11 | Class + item modifiers on required rolls per choice type |
-| 2026-05-11 | Flow changed: choose action → roll → see result (was: roll → choose → result) |
-| 2026-05-11 | DiceRoller: shows Need X+, success/fail label, item bonus line |
-| 2026-05-11 | Recovery actions now heal HP |
-| 2026-05-11 | **Situation/outcome split**: DM pre-generates encounter, choices respond to it, outcome reflects action — actions now have real consequences |
-| 2026-05-11 | Previous action type biases next encounter distribution |
-| 2026-05-11 | Git commit dd21162 pushed to main |
-| 2026-05-11 | Treasure encounters now announce item found in DM story; back buttons use router.replace('/') |
-| 2026-05-11 | Multiplayer: room.tsx + lobby.tsx fully built; game.tsx extended with Supabase Realtime sync + turn system |
+| 2026-05-11 | Initial solo flow, 5 UI components, Supabase setup, difficulty/item/class systems |
+| 2026-05-11 | Situation/outcome split DM, recovery heals HP, previous action biases encounter |
+| 2026-05-11 | Multiplayer: room.tsx + lobby.tsx + game.tsx turn system via Supabase Realtime |
+| 2026-05-12 | Natural story ending (questComplete), gold system, merchant events |
+| 2026-05-12 | Status effects (poison/burning/paralysis/blessed/strengthened), environmental damage |
+| 2026-05-12 | Class skills as 4th action, mana system, skill leveling (3 uses → level up) |
+| 2026-05-12 | Switched AI from Ollama to Vercel AI Gateway (google/gemini-3-flash) |
+| 2026-05-12 | STORY:/JSON: two-part DM format to prevent Gemini from compressing narrative |
+| 2026-05-12 | game.tsx refactored 675→290 lines; extracted GameHeader, PlayerStatusBar, EffectsBar, PhaseControls, MerchantPanel, InventoryPanel |
+| 2026-05-12 | constants/game.ts: STATUS_CONFIG, makePlayer(), EFFECT_ICONS, sellPrice() — eliminated duplication across solo/room/ClassSelector |
+| 2026-05-12 | Fixed DM parse bug: user messages referenced old "description field" format; JSON extraction now strips code fences; outcome streaming uses json-field:story mode |
